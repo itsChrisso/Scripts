@@ -1,0 +1,301 @@
+if myHero.charName ~= "Azir" then return end
+
+-- ChrissoAzir--
+
+
+local version = "1.0"
+local SCRIPT_NAME = "ChrissoAzir"
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+local SOURCELIB_URL = "https://raw.github.com/TheRealSource/public/master/common/SourceLib.lua"
+local SOURCELIB_PATH = LIB_PATH.."SourceLib.lua"
+
+if FileExist(SOURCELIB_PATH) then
+	require("SourceLib")
+else
+	DOWNLOADING_SOURCELIB = true
+	DownloadFile(SOURCELIB_URL, SOURCELIB_PATH, function() print("Required libraries downloaded successfully, please reload") end)
+end
+
+if DOWNLOADING_SOURCELIB then print("Downloading required libraries, please wait...") return end
+
+local RequireI = Require("SourceLib")
+RequireI:Add("vPrediction", "https://raw.github.com/Hellsing/BoL/tree/master/common/VPrediction.lua")
+RequireI:Add("SOW", "https://raw.github.com/Hellsing/BoL/tree/master/common/SOW.lua")
+RequireI:Check()
+
+if RequireI.downloadNeeded == true then return end
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+local MainCombo = {ItemManager:GetItem("DFG"):GetId(), _AA, _R, _Q, _E, _W, _PASIVE, _IGNITE}
+
+--Spell data
+local Ranges = {[_Q] = 1300, [_W] = 600, [_E] = 1300, [_R] = 500}
+local Delays = {[_Q] = 0.15, [_W] = 0, [_R] = 0.2}
+local Widths = {[_Q] = 200, [_W] = 100, [_R] = 200}
+local Speeds = {[_Q] = 800, [_W] = math.huge, [_E] = 800, [_R] = 1300}
+local AARange = 2500
+
+
+local LastQTime = 0
+function OnLoad()
+
+	VP = VPrediction()
+	SOWi = SOW(VP)
+	STS = SimpleTS(STS_PRIORITY_LESS_CAST_MAGIC)
+	DLib = DamageLib()
+	DManager = DrawManager()
+	print("ChrissoAzir Loaded!")
+
+	Q = Spell(_Q, Ranges[_Q])
+	W = Spell(_W, Ranges[_W])
+	E = Spell(_E, Ranges[_E])
+	R = Spell(_R, Ranges[_R])
+	E.VP = VP
+	Q:SetSkillshot(VP, SKILLSHOT_LINEAR, Widths[_Q], Delays[_Q], Speeds[_Q], false)
+	W:SetSkillshot(VP, SKILLSHOT_LINEAR, Widths[_w], Delays[_w], Speeds[_w], false)
+	R:SetSkillshot(VP, SKILLSHOT_LINEAR, Widths[_R], Delays[_R], Speeds[_R], false)
+
+	DLib:RegisterDamageSource(_Q, _MAGIC, 40, 40, _MAGIC, _AP, 0.65, function() return (player:CanUseSpell(_Q) == READY) end)
+	DLib:RegisterDamageSource(_W, _MAGIC, 30, 45, _MAGIC, _AP, 0.60, function() return (player:CanUseSpell(_W) == READY) end, function(target) return (player.ap * 0.15 + myHero:GetSpellData(_W).level * 15) or 0 end)
+	DLib:RegisterDamageSource(_E, _MAGIC, 35, 35, _MAGIC, _AP, 0.55, function() return (player:CanUseSpell(_E) == READY) end)
+	DLib:RegisterDamageSource(_R, _MAGIC, 50, 100, _MAGIC, _AP, 0.5, function() return (player:CanUseSpell(_R) == READY) end)
+	DLib:RegisterDamageSource(_PASIVE, _MAGIC, 0, 0, _MAGIC, _AP, 0, nil, function(target) return 0.08 * target.maxHealth end)
+
+	Menu = scriptConfig("Azir", "Azir")
+	
+	Menu:addParam("Escape", "Escape (W--Q--E)", SCRIPT_PARAM_ONKEYDOWN, false, string.byte('A'))
+	
+	Menu:addSubMenu("Orbwalking", "Orbwalking")
+		SOWi:LoadToMenu(Menu.Orbwalking)
+
+	Menu:addSubMenu("Target selector", "STS")
+		STS:AddToMenu(Menu.STS)
+
+	Menu:addSubMenu("Combo", "Combo")
+		Menu.Combo:addParam("UseQ", "Use Q", SCRIPT_PARAM_ONOFF, true)
+		Menu.Combo:addParam("UseW", "Use W", SCRIPT_PARAM_ONOFF, true)
+		Menu.Combo:addParam("UseE", "Use E", SCRIPT_PARAM_ONOFF, false)
+		Menu.Combo:addParam("UseR", "Use R", SCRIPT_PARAM_ONOFF, false)
+		Menu.Combo:addParam("Enabled", "Use Combo!", SCRIPT_PARAM_ONKEYDOWN, false, 32)
+
+	Menu:addSubMenu("Harass", "Harass")
+		Menu.Harass:addParam("UseQ", "Use Q", SCRIPT_PARAM_ONOFF, true)
+		Menu.Harass:addParam("UseW", "Use W", SCRIPT_PARAM_ONOFF, true)
+		Menu.Harass:addParam("ManaCheck", "Don't harass if mana < %", SCRIPT_PARAM_SLICE, 0, 0, 100)
+		Menu.Harass:addParam("Enabled", "Harass!", SCRIPT_PARAM_ONKEYDOWN, false, string.byte("C"))
+
+	Menu:addSubMenu("JungleFarm", "JungleFarm")
+		Menu.JungleFarm:addParam("UseQ",  "Use Q", SCRIPT_PARAM_ONOFF, true)
+		Menu.JungleFarm:addParam("UseW",  "Use W", SCRIPT_PARAM_ONOFF, true)
+		Menu.JungleFarm:addParam("UseE",  "Use E", SCRIPT_PARAM_ONOFF, true)
+		Menu.JungleFarm:addParam("Enabled", "Farm!", SCRIPT_PARAM_ONKEYDOWN, false,   string.byte("V"))
+    
+    Menu:addSubMenu("Ultimate", "Ultimate")
+    Menu.Ultimate:addParam("CastR", "Auto-Aim ultimate", SCRIPT_PARAM_ONKEYDOWN, false, string.byte("R"))
+    Menu.Ultimate:addParam("AutoUlti", "AutoUlti if X enemies can be hit ",SCRIPT_PARAM_ONOFF, true)
+    Menu.Ultimate:addParam("RTargetSet", "Set Minimum Enemies to auto ulti ", SCRIPT_PARAM_SLICE, 2, 1, 5, 0)
+
+	Menu:addSubMenu("Misc", "Misc")
+		Menu.Misc:addParam("AutoQ", "Auto Q on gapclosing targets", SCRIPT_PARAM_ONOFF, true)
+		Menu.Misc:addParam("AutoQ2", "Auto Q on stunned targets", SCRIPT_PARAM_ONOFF, true)
+
+	Menu:addSubMenu("Drawings", "Drawings")
+	--[[Spell ranges]]
+	for spell, range in pairs(Ranges) do
+		DManager:CreateCircle(myHero, range, 1, {255, 255, 255, 255}):AddToMenu(Menu.Drawings, SpellToString(spell).." Range", true, true, true)
+	end
+	--[[Predicted damage on healthbars]]
+	DLib:AddToMenu(Menu.Drawings, MainCombo)
+
+	EnemyMinions = minionManager(MINION_ENEMY, Ranges[_Q], myHero, MINION_SORT_MAXHEALTH_DEC)
+	JungleMinions = minionManager(MINION_JUNGLE, Ranges[_Q], myHero, MINION_SORT_MAXHEALTH_DEC)
+
+end
+
+function OnCreateObj(obj) 
+    if obj and obj.name == "Azir_Base_W_SoldierCape.troy" and GetDistance(obj) < 550 then --"AzirSoldier" then
+        table.insert(soldiers, {obj=obj,time=GetTickCount()}) 
+    end 
+end
+
+function OnDeleteObj(obj) 
+    if obj.name == "Azir_Base_P_Soldier_Ring.troy" then
+        for nr, object in pairs(soldiers) do
+            if object.obj ~= nil and GetDistance(obj, object.obj) < 10 then
+                table.remove(soldiers, nr)
+            end
+        end
+    end
+end
+
+function Escape()
+    if (Ready(_W) or #soldiers > 0) and (Ready(_E) or myHero:CanUseSpell(_E) == 3) then
+        if Ready(_W) then
+            local EndPos = Vector(myHero) + Vector(Vector(mousePos) - Vector(myHero)):normalized()*SpellW.Range
+            Cast(_W, EndPos.x, EndPos.z)
+        end
+        if #soldiers > 0 then
+            local far = nil
+            local dist = 0
+            for nr, soldier in pairs(soldiers) do
+                if not far or GetDistanceSqr(mousePos, soldier.obj) < dist then
+                    far = soldier.obj
+                    dist = GetDistanceSqr(mousePos, soldier.obj)
+                end
+            end
+
+            if far and GetDistanceSqr(far, mousePos) < GetDistanceSqr(myHero, mousePos) then 
+                
+                if Ready(_Q) then
+                    local EndPos = Vector(myHero) + Vector(Vector(mousePos) - Vector(myHero)):normalized()*3000
+                    Cast(_Q, EndPos.x, EndPos.z)
+                end
+                DelayAction(function() Cast(_E, far.x, far.z) end, 0.1)
+                --Cast(_E, far.x, far.z)
+            end
+        end
+    end
+end
+
+function Combo()
+	local AAtarget = STS:GetTarget(AARange)
+	local Qtarget = STS:GetTarget(Ranges[_Q])
+	local Wtarget = STS:GetTarget(Ranges[_W])
+	local Etarget = STS:GetTarget(Ranges[_E])
+	local Rtarget = STS:GetTarget(Ranges[_R])
+	local status
+	SOWi:EnableAttacks()
+
+	if AAtarget and (WallObject ~= nil) then
+		MyHero:Attack(AAtarget)
+	end
+
+	if Wtarget and DLib:IsKillable(Wtarget, MainCombo) then
+		ItemManager:CastOffensiveItems(Wtarget)
+	end
+
+	if Wtarget and W:IsReady() and Menu.Combo.UseW then
+		W:Cast(Wtarget)
+	end
+	
+	if not Wtarget and W:IsReady() and Q:IsReady() and Qtarget then
+		W:Cast()
+	end
+	
+		if Qtarget and Q:IsReady() then
+		Q:Cast(Qtarget)
+	end
+
+	if Etarget and E:IsReady() and WallObject ~= nil and (GetDistance(WallObject,enemy) < 400) and Menu.Combo.UseE then
+		E:Cast(WallObject)
+	end
+	
+
+	local IgniteTarget = STS:GetTarget(600)
+	if IgniteTarget and _IGNITE and  GetInventorySlotItem(_IGNITE) then
+		CastSpell(GetInventorySlotItem(_IGNITE), IgniteTarget)
+	end
+		
+
+	if R:IsReady() and Menu.Combo.UseR then
+		status = R:Cast(Rtarget)
+	end
+end
+
+function Harass()
+	if Menu.Harass.ManaCheck > (myHero.mana / myHero.maxMana) * 100 then return end
+	local AAtarget = STS:GetTarget(AARange)
+	local Qtarget = STS:GetTarget(Ranges[_Q])
+	local Wtarget = STS:GetTarget(Ranges[_W])	
+
+	if AAtarget then
+		myHero:Attack(AAtarget)
+	end
+
+	if Wtarget and W:IsReady() and Menu.Harass.UseW then
+		W:Cast(Wtarget)
+	end
+	
+	if not Wtarget and W:IsReady() and Q:IsReady() and Qtarget then
+		W:Cast()
+	end
+	
+		if Qtarget and Q:IsReady() and Menu.Harass.UseQ then
+		Q:Cast(Qtarget)
+	end
+
+end
+
+function JungleFarm()
+	JungleMinions:update()
+
+	local UseQ = Menu.Farm.UseQ
+	local UseW = Menu.Farm.UseW
+	local UseE = Menu.Farm.UseE
+	local minion = JungleMinions.objects[1]
+	
+	if minion then
+	myHero:Attack(minion)
+		if UseQ then
+			Q:Cast(minion)
+		end
+		if UseW then
+			if GetDistance(minion) < Ranges[_W] then
+			W:Cast()
+			end
+		end
+	end
+end
+
+function AutoTrackerR() 
+local Rtarget = STS:GetTarget(Ranges[_R])
+local MinTarget= Menu.Ultimate.RTargetSet
+local EnemyInRange = CountEnemyHeroInRange(200,Rtarget) 
+
+if Rtarget then 
+if MinTarget <= EnemyInRange then 
+ R:Cast(Rtarget)
+end 
+end 
+end 
+
+local WallObject 
+	
+function OnCreateObj(obj)
+	if obj and obj.name == "AzirSoldier" then
+		WallObject = obj 
+	end 
+end
+
+function OnTick()
+	SOWi:EnableAttacks()
+
+	if Menu.Combo.Enabled then
+		Combo()
+	elseif Menu.Harass.Enabled then
+		Harass()
+	end
+
+	if Menu.JungleFarm.Enabled then
+		JungleFarm()
+	end
+
+	if Menu.Ultimate.AutoUlti then 
+
+		AutoTrackerR() 
+
+	end 
+
+	if Menu.Ultimate.CastR then
+		local Rtarget = STS:GetTarget(Ranges[_R])
+         R:Cast(Rtarget)
+  end 
+	end
